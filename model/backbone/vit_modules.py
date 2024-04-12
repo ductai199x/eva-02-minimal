@@ -73,7 +73,7 @@ class PatchEmbed(nn.Module):
 
     def forward(self, x):
         x = self.proj(x)
-        x = x.permute(0, 2, 3, 1) # B C H W -> B H W C
+        x = x.permute(0, 2, 3, 1)  # B C H W -> B H W C
         return x
 
 
@@ -94,9 +94,7 @@ class VisionRotaryPositionalEmbedding(nn.Module):
         theta = 1.0 / (
             base ** (2 / dim * torch.arange(0, dim // 2, dtype=torch.float32)).repeat_interleave(2)
         )
-        idx_theta = torch.einsum(
-            "i,ij -> ij", tokens, theta.repeat(len(tokens), 1)
-        )
+        idx_theta = torch.einsum("i,ij -> ij", tokens, theta.repeat(len(tokens), 1))
         cos_idx_theta = idx_theta.cos()
         sin_idx_theta = idx_theta.sin()
 
@@ -198,14 +196,14 @@ class Attention(nn.Module):
         self.head_dim = dim // num_heads
         self.scale = self.head_dim**-0.5
 
-        self.qkv =  nn.Linear(dim, dim * 3, bias=qkv_bias)
+        self.qkv = nn.Linear(dim, dim * 3, bias=qkv_bias)
         nn.init.constant_(self.qkv.bias, 0)
 
-        self.q_proj = nn.Linear(dim, dim, bias=False)
-        self.k_proj = nn.Linear(dim, dim, bias=False)
-        self.v_proj = nn.Linear(dim, dim, bias=False)
-        self.q_bias = nn.Parameter(torch.zeros(dim))
-        self.v_bias = nn.Parameter(torch.zeros(dim))
+        # self.q_proj = nn.Linear(dim, dim, bias=False)
+        # self.k_proj = nn.Linear(dim, dim, bias=False)
+        # self.v_proj = nn.Linear(dim, dim, bias=False)
+        # self.q_bias = nn.Parameter(torch.zeros(dim))
+        # self.v_bias = nn.Parameter(torch.zeros(dim))
 
         self.q_norm = norm_layer(self.head_dim) if qk_norm else nn.Identity()
         self.k_norm = norm_layer(self.head_dim) if qk_norm else nn.Identity()
@@ -219,9 +217,10 @@ class Attention(nn.Module):
         N = H * W
         x = x.reshape(B, N, C)
 
-        qkv = self.qkv(x).reshape(B, N, 3, self.num_heads, self.head_dim).permute(2, 0, 3, 1, 4) # 3, B, H, N, C
-        q, k, v = qkv.unbind(0) # B, H, N, C
-
+        qkv = (
+            self.qkv(x).reshape(B, N, 3, self.num_heads, self.head_dim).permute(2, 0, 3, 1, 4)
+        )  # 3, B, H, N, C
+        q, k, v = qkv.unbind(0)  # B, H, N, C
 
         # q = F.linear(input=x, weight=self.q_proj.weight, bias=self.q_bias)
         # k = F.linear(input=x, weight=self.k_proj.weight, bias=None)
@@ -235,9 +234,8 @@ class Attention(nn.Module):
 
         x = F.scaled_dot_product_attention(q, k, v, dropout_p=self.attn_drop)
         x = x.transpose(1, 2).reshape(B, N, C)
-        
 
-        x = self.proj(x)
+        x = self.proj_drop(self.proj(x))
         x = x.reshape(B, H, W, C)
         return x
 
@@ -286,6 +284,17 @@ class Block(nn.Module):
             subln=True if mlp_layer == SwiGLU else False,
         )
 
+        self.apply(self._init_weights)
+
+    def _init_weights(self, m):
+        if isinstance(m, nn.Linear):
+            nn.init.trunc_normal_(m.weight, std=0.02)
+            if isinstance(m, nn.Linear) and m.bias is not None:
+                nn.init.constant_(m.bias, 0)
+        elif isinstance(m, nn.LayerNorm):
+            nn.init.constant_(m.bias, 0)
+            nn.init.constant_(m.weight, 1.0)
+
     def forward(self, x):
         B, H, W, C = x.shape
         shortcut = x
@@ -300,5 +309,3 @@ class Block(nn.Module):
         x = x + self.drop_path(self.mlp(self.norm2(x)))
         x = x.reshape(B, H, W, C)
         return x
-
-
